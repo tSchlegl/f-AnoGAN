@@ -8,7 +8,7 @@ Code for reproducing **f-AnoGAN** training and anomaly scoring presented in *"f-
 If you use (parts of) this code in your work please refer to this citation:
 
 ```
-Thomas Schlegl, Philipp Seeboeck, Sebastian Waldstein, Georg Langs, Ursula Schmidt-Erfurth (forthcoming). f-AnoGAN: Fast Unsupervised Anomaly Detection with Generative Adversarial Networks. Medical image analysis. DOI: https://doi.org/10.1016/j.media.2019.01.010
+Schlegl, T., Seeböck, P., Waldstein, S.M., Langs, G., Schmidt-Erfurth, U., 2019. f-AnoGAN: Fast Unsupervised Anomaly Detection with Generative Adversarial Networks. Medical Image Analysis 54, 30-44. DOI: https://doi.org/10.1016/j.media.2019.01.010
 ```
 
 ## Prerequisites

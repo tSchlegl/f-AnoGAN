@@ -1,4 +1,4 @@
-f-AnoGAN: Fast Unsupervised Anomaly Detection with Generative Adversarial Networks
+f-AnoGAN: Fast unsupervised anomaly detection with generative adversarial networks
 ===================================================================
 
 ![Overview](paper/GraphicalAbstract.png)
@@ -33,5 +33,7 @@ Image paths are set in `tflib/img_loader.py`. Images should be provided as "*.pn
 - `test_anom_path`    = "path-to-folder-holding-anom-test-images"
 Please edit that file to specify the paths to your datasets.
 
+
+## Misc
 
 Results of related research work are provided at [CIR](http://www.cir.meduniwien.ac.at/research/anomalies/).

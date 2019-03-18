@@ -31,6 +31,7 @@ Image paths are set in `tflib/img_loader.py`. Images should be provided as "*.pn
 - `trainset_val_path` = "path-to-folder-holding-normal-validation-images"
 - `test_normal_path`  = "path-to-folder-holding-normal-test-images"
 - `test_anom_path`    = "path-to-folder-holding-anom-test-images"
+
 Please edit that file to specify the paths to your datasets.
 
 

@@ -1,15 +1,38 @@
+"""
+Training of the WGAN-GP model
+
+Copyright (c) 2017 Ishaan Gulrajani
+Copyright (c) 2018 Thomas Schlegl ... modified and extended
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
+
 import os, sys
-import pdb
+import numpy as np
 import re
 sys.path.append(os.getcwd())
 
+import tensorflow as tf
 import time
 import functools
 from tqdm import tqdm
-
-import numpy as np
-import tensorflow as tf
-import sklearn.datasets
 
 import tflib as lib
 import tflib.ops.linear
@@ -19,15 +42,7 @@ import tflib.ops.deconv2d
 import tflib.save_images
 import tflib.img_loader
 import tflib.ops.layernorm
-import tflib.plot_v2
-
-
-#### - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-##
-## Code adapted and extended by Thomas Schlegl (2018)
-## Based on codebase from: https://github.com/igul222/improved_wgan_training
-##
-#### - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+import tflib.plot
 
 
 class bcolors:
@@ -49,7 +64,7 @@ CRITIC_ITERS = 5
 N_GPUS = 1
 BATCH_SIZE = 64
 LAMBDA = 10 # Gradient penalty hyperpar
-OUTPUT_DIM = 64*64*1 # Number of pixels in each iamge
+OUTPUT_DIM = 64*64*1 # Number of pixels in each image
 ZDIM = 128
 TRAIN_EPOCHS = 7
 ZSPACE_SMPL_NRIMG = 5
@@ -63,11 +78,8 @@ log_dir    = os.path.join("wganTrain", run_name, "logs")
 samples_dir  = os.path.join("wganTrain", run_name, "samples")
 z_interp_dir = os.path.join("wganTrain", run_name, "z_interp")
 
-for dir_path in [checkpoint_dir, log_dir, samples_dir, z_interp_dir]:
-    if not os.path.isdir(dir_path):
-        os.makedirs(dir_path)
 
-
+print bcolors.GREEN + "\n=== WGAN-GP TRAINING PARAMETERS ===" + bcolors.ENDC
 lib.print_model_settings(locals().copy())
 
 DEVICES = ['/gpu:{}'.format(i) for i in xrange(N_GPUS)]
@@ -86,14 +98,6 @@ def my_Normalize(name, inputs, is_training):
         return lib.ops.layernorm.Layernorm(name,[1,2,3],inputs)
     else:
         return tf.layers.batch_normalization(inputs, axis=1, training=is_training, name=name)
-
-def SubpixelConv2D(*args, **kwargs):
-    kwargs['output_dim'] = 4*kwargs['output_dim']
-    output = lib.ops.conv2d.Conv2D(*args, **kwargs)
-    output = tf.transpose(output, [0,2,3,1])
-    output = tf.depth_to_space(output, 2)
-    output = tf.transpose(output, [0,3,1,2])
-    return output
 
 def ConvMeanPool(name, input_dim, output_dim, filter_size, inputs, he_init=True, biases=True):
     output = lib.ops.conv2d.Conv2D(name, input_dim, output_dim, filter_size, inputs, he_init=he_init, biases=biases)
@@ -187,7 +191,7 @@ def GoodGenerator(n_samples, noise=None, rand_sampling=RAND_SAMPLING, dim=DIM, n
         return tf.reshape(output, [-1, OUTPUT_DIM])
 
 
-def GoodDiscriminator(inputs, dim=DIM, is_training=False, reuse=None, out_feats=False):
+def GoodDiscriminator(inputs, dim=DIM, is_training=False, reuse=None, out_feats=True):
     with tf.variable_scope('Discriminator', reuse=reuse):
         output = tf.reshape(inputs, [-1, 1, 64, 64])
         output = lib.ops.conv2d.Conv2D('Discriminator.Input', 1, dim, 3, output, he_init=False)
@@ -240,8 +244,11 @@ def load(session, saver, checkpoint_dir, checkpoint_iter=None):
 def train():
     Generator, Discriminator = GoodGenerator, GoodDiscriminator
 
-    with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as session:
+    for dir_path in [checkpoint_dir, log_dir, samples_dir, z_interp_dir]:
+        if not os.path.isdir(dir_path):
+            os.makedirs(dir_path)
 
+    with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as session:
         all_real_data_conv = tf.placeholder(tf.int32, shape=[BATCH_SIZE, 1, 64, 64])
         if tf.__version__.startswith('1.'):
             split_real_data_conv = tf.split(all_real_data_conv, len(DEVICES))
@@ -253,10 +260,10 @@ def train():
         for device_index, (device, real_data_conv) in enumerate(zip(DEVICES, split_real_data_conv)):
             with tf.device(device):
                 real_data = tf.reshape(2*((tf.cast(real_data_conv, tf.float32)/255.)-.5), [BATCH_SIZE/len(DEVICES), OUTPUT_DIM])
-                fake_data = Generator(BATCH_SIZE/len(DEVICES))
+                fake_data = Generator(BATCH_SIZE/len(DEVICES), rand_sampling=RAND_SAMPLING, is_training=True)
 
-                disc_real = Discriminator(real_data)
-                disc_fake = Discriminator(fake_data, reuse=True)
+                disc_real = Discriminator(real_data, out_feats=False)
+                disc_fake = Discriminator(fake_data, reuse=True, out_feats=False)
 
                 if MODE == 'wgan-gp':
                     gen_cost = -tf.reduce_mean(disc_fake)
@@ -269,8 +276,7 @@ def train():
                     )
                     differences = fake_data - real_data
                     interpolates = real_data + (alpha*differences)
-                    #gradients = tf.gradients(Discriminator(interpolates), [interpolates])[0]
-                    gradients = tf.gradients(Discriminator(interpolates, reuse=True), [interpolates])[0]
+                    gradients = tf.gradients(Discriminator(interpolates, reuse=True, out_feats=False), [interpolates])[0]
                     slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
                     gradient_penalty = tf.reduce_mean((slopes-1.)**2)
                     disc_cost += LAMBDA*gradient_penalty
@@ -291,13 +297,9 @@ def train():
             update_ops_dis = [var for var in update_ops if 'Discriminator' in var.name] 
 
             with tf.control_dependencies(update_ops_gen):
-                #gen_train_op = tf.train.AdamOptimizer(learning_rate=1e-4, beta1=0., beta2=0.9).minimize(gen_cost,
-                #                              var_list=lib.params_with_name('Generator'), colocate_gradients_with_ops=True)
                 gen_train_op = tf.train.AdamOptimizer(learning_rate=1e-4, beta1=0., beta2=0.9).minimize(gen_cost,
                                               var_list=gen_vars, colocate_gradients_with_ops=True)
             with tf.control_dependencies(update_ops_dis):
-                #disc_train_op = tf.train.AdamOptimizer(learning_rate=1e-4, beta1=0., beta2=0.9).minimize(disc_cost,
-                #                               var_list=lib.params_with_name('Discriminator.'), colocate_gradients_with_ops=True)
                 disc_train_op = tf.train.AdamOptimizer(learning_rate=1e-4, beta1=0., beta2=0.9).minimize(disc_cost,
                                                var_list=dis_vars, colocate_gradients_with_ops=True)
 
@@ -311,7 +313,7 @@ def train():
         all_fixed_noise_samples = []
         for device_index, device in enumerate(DEVICES):
             n_samples = BATCH_SIZE / len(DEVICES)
-            all_fixed_noise_samples.append(Generator(n_samples, noise=fixed_noise[device_index*n_samples:(device_index+1)*n_samples], is_training=False, reuse=True ) )
+            all_fixed_noise_samples.append(Generator(n_samples, noise=fixed_noise[device_index*n_samples:(device_index+1)*n_samples], rand_sampling=RAND_SAMPLING, is_training=False, reuse=True ) )
         if tf.__version__.startswith('1.'):
             all_fixed_noise_samples = tf.concat(all_fixed_noise_samples, 0)
         else:
@@ -324,7 +326,7 @@ def train():
 
 
         # Dataset iterator
-        train_gen,_,_ = lib.img_loader.load(BATCH_SIZE)
+        train_gen,_ = lib.img_loader.load(BATCH_SIZE, 'wgan_train')
 
         nr_training_samples = lib.img_loader.get_nr_training_samples(BATCH_SIZE)
         nr_iters_per_epoch = nr_training_samples//BATCH_SIZE
@@ -343,7 +345,7 @@ def train():
 
         # EVALUATION: z-interpolation ******
         eval_query_noise = tf.placeholder(tf.float32, shape=[ZSPACE_SMPL_PTS, ZDIM])
-        zeval_gen_imgs = Generator(ZSPACE_SMPL_PTS, noise=eval_query_noise, is_training=False, reuse=True )
+        zeval_gen_imgs = Generator(ZSPACE_SMPL_PTS, noise=eval_query_noise, rand_sampling=RAND_SAMPLING, is_training=False, reuse=True )
 
         def get_z_interpolations(smpl_pts, z_dim=ZDIM, v_len_lim=0.5):
             z_samples = np.zeros((smpl_pts, z_dim), dtype=np.float32)
@@ -377,7 +379,6 @@ def train():
         isLoaded, ckpt = load(session, saver, checkpoint_dir, checkpoint_iter)
         start_iter = 0
 
-
         # Train loop
         iteration = 0
         for epoch in tqdm(xrange(TRAIN_EPOCHS)):
@@ -397,23 +398,25 @@ def train():
                     _disc_cost, _ = session.run([disc_cost, disc_train_op], feed_dict={all_real_data_conv: _data})
 
                 ## -- LOGGING **
-                lib.plot_v2.tick(iteration)
+                lib.plot.tickit(iteration)
 
                 if (iteration == (3*disc_iters)) or (iteration % (100*disc_iters) == 0):
-                    lib.plot_v2.plot('train disc cost', _disc_cost)
-                    lib.plot_v2.plot('train gen cost', _gen_cost)
-                    lib.plot_v2.plot('time', time.time() - start_time)
+                    lib.plot.plot('train disc cost', _disc_cost)
+                    lib.plot.plot('train gen cost', _gen_cost)
+                    lib.plot.plot('time', time.time() - start_time)
 
                 if (iteration == (10*disc_iters)) or (iteration == (100*disc_iters)) or ( iteration % (1000*disc_iters) == 0):
                     generate_image(epoch+1, iteration)
 
 
                 if (iteration < 10) or ( iteration % (100*disc_iters) == 0):
-                    #lib.plot_v2.flush()
-                    lib.plot_v2.flush(log_dir)
+                    lib.plot.flush(log_dir)
 
                     total_samples_seen = iteration * BATCH_SIZE
-                    nr_samples_within_epoch = np.mod(total_samples_seen, epoch*(nr_iters_per_epoch-CRITIC_ITERS))
+                    if (epoch+1)==1:
+                        nr_samples_within_epoch = total_samples_seen
+                    else:
+                        nr_samples_within_epoch = np.mod(total_samples_seen, epoch*(nr_iters_per_epoch-CRITIC_ITERS))
                     
                     print bcolors.GREEN + "\tSaw real samples of %d full epochs and %10d additinal samples .. " \
                                             %(epoch, nr_samples_within_epoch) + \
